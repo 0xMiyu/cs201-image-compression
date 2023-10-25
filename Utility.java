@@ -28,6 +28,7 @@ public class Utility implements Serializable {
         int minDepth = 5;
         int maxDepth = 7;
         double maxLoss = 15.0;
+
         QuadNode root = null;
 
         // Using the buildQuadtreeWrapper with the parameters
@@ -42,6 +43,7 @@ public class Utility implements Serializable {
             e.printStackTrace(); // This will print the root cause of the exception
             return; // Exit the method early
         }
+
 
         try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(outputFileName))) {
             // Write the dimensions of the image
@@ -110,7 +112,8 @@ public class Utility implements Serializable {
     }
 
     public QuadNode buildQuadtreeWrapper(int[][][] pixels, double maxLoss, int maxDepth, int minDepth)
-            throws InterruptedException, ExecutionException {
+        throws InterruptedException, ExecutionException {
+
         int xStart = 0;
         int yStart = 0;
         int width = pixels.length;
@@ -121,7 +124,7 @@ public class Utility implements Serializable {
 
         // ExecutorService executor = Executors.newCachedThreadPool();;
 
-        QuadNode root = buildQuadtree(pixels, xStart, yStart, width, height, maxLoss, maxDepth, minDepth, executor, 0);
+        QuadNode root = buildQuadtree(pixels, xStart, yStart, width, height, maxLoss, maxDepth, minDepth, executor, 1); // start at depth 1
 
         executor.shutdown();
         executor.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
@@ -129,15 +132,16 @@ public class Utility implements Serializable {
         return root;
     }
 
-    private static final int MAX_CONCURRENT_DEPTH = 3; // Adjust as needed
+    private static final int MAX_CONCURRENT_DEPTH = 0; // Adjust as needed
 
     private QuadNode buildQuadtree(int[][][] pixels, int xStart, int yStart, int width, int height,
-            double lossThreshold, int depth, int minDepth, ExecutorService executor, int currentDepth)
-            throws InterruptedException, ExecutionException {
+        double lossThreshold, int maxDepth, int minDepth, ExecutorService executor, int currentDepth)
+        throws InterruptedException, ExecutionException {
+
         Color avgColor = averageColor(pixels, xStart, yStart, width, height);
 
-        if ((depth == 0 || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold)) &&
-                depth <= (7 - minDepth)) {
+        if ((currentDepth == maxDepth || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold)) &&
+        currentDepth >= minDepth) {
             return new QuadNode(xStart, yStart, width, height, avgColor);
         }
 
@@ -157,9 +161,8 @@ public class Utility implements Serializable {
                 int yOff = offsets[i][1];
                 int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
                 int h = (i < 2) ? halfHeight : height - halfHeight;
-                futures[i] = executor
-                        .submit(() -> buildQuadtree(pixels, xStart + xOff, yStart + yOff, w, h, lossThreshold,
-                                depth - 1, minDepth, executor, currentDepth + 1));
+                futures[i] = executor.submit(() -> buildQuadtree(pixels, xStart + xOff, yStart + yOff, w, h, lossThreshold, 
+                            maxDepth, minDepth, executor, currentDepth + 1));
             }
 
             for (int i = 0; i < 4; i++) {
@@ -172,7 +175,8 @@ public class Utility implements Serializable {
                 int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
                 int h = (i < 2) ? halfHeight : height - halfHeight;
                 node.children[i] = buildQuadtree(pixels, xStart + xOff, yStart + yOff, w, h, lossThreshold,
-                        depth - 1, minDepth, executor, currentDepth + 1);
+                    maxDepth, minDepth, executor, currentDepth + 1);
+
             }
         }
 
