@@ -112,8 +112,8 @@ public class Utility implements Serializable {
     }
 
     public void Compress(int[][][] pixels, String outputFileName) {
-        int minDepth = 3;
-        int maxDepth = 8;
+        int minDepth = 7;
+        int maxDepth = 10;
         double maxLoss = 15.0;
 
         QuadNode root = null;
@@ -250,6 +250,10 @@ public class Utility implements Serializable {
     }
 
     private Color averageColor(int[][][] preprocessedPixels, int xStart, int yStart, int width, int height) {
+        if (width == 0 || height == 0) {
+            return new Color(0, 0, 0);
+        }
+
         int xEnd = xStart + width - 1;
         int yEnd = yStart + height - 1;
     
