@@ -1,55 +1,30 @@
 import java.io.*;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Stack;
+import java.util.Queue;
 import java.util.HashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-
-import org.w3c.dom.Node;
 
 import java.awt.Color;
 
 public class Utility implements Serializable {
     private static final long serialVersionUID = 3L;
 
-    class SecretSauce {
-        private static int position = 0;
-        private static byte currentByte = 0;
-        private static ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    class PackedData implements Serializable {
+        int width, height;
+        HuffmanNode root;
+        Queue<String> compressedImage;
 
-        public static void packBit(int bit) {
-            if (bit != 0 && bit != 1) {
-                throw new IllegalArgumentException("Bit value should be 0 or 1.");
-            }
-            
-            currentByte = (byte) (currentByte | (bit << (7 - position)));
-            position++;
-
-            if (position == 8) {
-                baos.write(currentByte);
-                currentByte = 0;
-                position = 0;
-            }
-        }
-
-        public static void flush() {
-            while (position != 0) {
-                packBit(0);
-            }
-        }
-
-        public static byte[] getBytes() {
-            return baos.toByteArray();
-        }
-
-        public static void reset() {
-            position = 0;
-            currentByte = 0;
-            baos.reset();
+        public PackedData(int width, int height, HuffmanNode root, Queue<String> compressedImage) {
+            this.width = width;
+            this.height = height;
+            this.root = root;
+            this.compressedImage = compressedImage;
         }
     }
 
@@ -70,7 +45,7 @@ public class Utility implements Serializable {
         }
     }
 
-    class HuffmanNode implements Comparable<HuffmanNode> {
+    class HuffmanNode implements Comparable<HuffmanNode>, Serializable {
         int freq;
         Color color;
         HuffmanNode left, right;
@@ -160,177 +135,83 @@ public class Utility implements Serializable {
         }
 
         HuffmanNode huffmanRoot = hc.buildPriorityQueue();
+
         HashMap<Color, String> huffmanCodes = new HashMap<>();
-        hc.generateHuffmanCodes(huffmanRoot, "1", huffmanCodes);
-        traverseQuadTree(root, huffmanCodes);
+        hc.generateHuffmanCodes(huffmanRoot, "", huffmanCodes);
 
-        SecretSauce.flush();
-        byte[] compressedImage = SecretSauce.getBytes();
+        Queue<String> queue = new LinkedBlockingQueue<String>();
 
-        SecretSauce.reset();
+        traverseQuadTree(root, huffmanCodes, queue);
 
-        try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(outputFileName)))) {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(outputFileName)))) {
             // Write the dimensions of the image
-            dos.writeInt(pixels.length);
-            dos.writeInt(pixels[0].length);
-
-            dos.writeShort(huffmanCodes.size());
-
-            for (Color color : huffmanCodes.keySet()) {
-                dos.write((byte) color.getRed());
-                dos.write((byte) color.getGreen());
-                dos.write((byte) color.getBlue());
-
-                String code = huffmanCodes.get(color);
-                dos.writeShort(code.length());
-                for (int i = 0; i < code.length(); i++) {
-                    SecretSauce.packBit(code.charAt(i) - '0');
-                }
-
-                SecretSauce.flush();
-                dos.write(SecretSauce.getBytes());
-                SecretSauce.reset();
-            }
-
-            dos.write(compressedImage);
-
-            SecretSauce.flush();
-            SecretSauce.reset();
-
-            //serializeQuadNode(dos, root);
+            oos.writeObject(
+                new PackedData(
+                    pixels.length, 
+                    pixels[0].length, 
+                    huffmanRoot, 
+                    queue
+                )
+            );
         } catch (IOException e) {
             System.err.println("An I/O error occurred while writing the compressed data: " + e.getMessage());
         }
-
-        SecretSauce.reset();
     }
 
-    public int[][][] Decompress(String inputFileName) throws IOException {
-        int width, height;
-        
-        HuffmanNode huffmanRoot = new HuffmanNode(0, null);
-
-        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(new FileInputStream(inputFileName)))) {
-            // Read the dimensions of the image
-            width = dis.readInt();
-            height = dis.readInt();
-
-            int[][][] pixels = new int[width][height][3];
-
-            int numCodes = dis.readShort();
-
-            for (int i = 0; i < numCodes; i++) {
-                int red = dis.readByte() & 0xFF;
-                int green = dis.readByte() & 0xFF;
-                int blue = dis.readByte() & 0xFF;
-    
-                int bitLength = dis.readShort() - 1;
-                int byteLength = (int) Math.ceil(bitLength / 8.0);
-
-                byte[] code = new byte[byteLength];
-                for (int j = 0; j < byteLength; j++) {
-                    code[j] = dis.readByte();
-                }
-
-                StringBuilder bitString = new StringBuilder();
-                for (byte b : code) {
-                    for (int j = 7; j >= 0; j--) {
-                        bitString.append((b >> j) & 1);
-                        bitLength--;
-
-                        if (bitLength == 0) {
-                            break;
-                        }
-                    }
-
-                    if (bitLength == 0) {
-                        break;
-                    }
-                }
-                
-                HuffmanNode curr = huffmanRoot;
-                for (int j = 1; j < bitString.length(); j++) {
-                    char c = bitString.charAt(j);
-                    if (c == '1') {
-                        if (curr.right == null) {
-                            curr.right = new HuffmanNode(0, new Color(red, green, blue));
-                            break;
-                        }
-                        curr = curr.right;
-                    } else {
-                        if (curr.left == null) {
-                            curr.left = new HuffmanNode(0, new Color(red, green, blue));
-                            break;
-                        }
-                        curr = curr.left;
-                    }
-                }
-            }
-
-            byte[] bytes = dis.readAllBytes();
-
-            StringBuilder bitString = new StringBuilder();
-            for (byte b : bytes) {
-                for (int i = 7; i >= 0; i--) {
-                    bitString.append((b >> i) & 1);
-                }
-            }
-
-            char[] huffmanCodes = bitString.toString().toCharArray();
-            int i = 0;
-
-            int end = decompressQuadTree(pixels, 0, 0, width, height, huffmanRoot, huffmanCodes, i);
-            System.out.println(end + " " + huffmanCodes.length);
-            return pixels;
-        }
-    }
-
-    private int decompressQuadTree(int[][][] pixels, int xStart, int yStart, int width, int height, HuffmanNode huffmanRoot, char[] huffmanCodes, int i) {
+    private void decompressQuadTree(int[][][] pixels, int xStart, int yStart, int width, int height, HuffmanNode huffmanRoot, Queue<String> al) {
         int halfWidth = width / 2;
         int halfHeight = height / 2;
 
-        // This is a leaf node
-        if (huffmanCodes[i] == '1') {
+        int[][] offsets = {
+                { 0, 0 }, { halfWidth, 0 }, { 0, halfHeight }, { halfWidth, halfHeight }
+        };
+
+        String value = al.poll();
+        if (value.equals(".")) {
+            for (int i = 0; i < 4; i++) {
+                int xOff = offsets[i][0];
+                int yOff = offsets[i][1];
+                int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
+                int h = (i < 2) ? halfHeight : height - halfHeight;
+                
+                decompressQuadTree(pixels, xStart + xOff, yStart + yOff, w, h, huffmanRoot, al);
+            }
+        } else {
+            // Traverse huffman
             HuffmanNode curr = huffmanRoot;
-            HuffmanNode prev = null;
-            i += 1;
-
-            while (curr != null) {
-                prev = curr;
-                if (huffmanCodes[i] == '1') {
-                    curr = curr.right;
-                } else {
+            for (int i = 0; i < value.length(); i++) {
+                if (value.charAt(i) == '0') {
                     curr = curr.left;
+                } else {
+                    curr = curr.right;
                 }
-
-                i += 1;
             }
 
             for (int x = xStart; x < Math.min(xStart + width, pixels.length); x++) {
                 for (int y = yStart; y < Math.min(yStart + height, pixels[0].length); y++) {
-                    pixels[x][y][0] = prev.color.getRed();
-                    pixels[x][y][1] = prev.color.getGreen();
-                    pixels[x][y][2] = prev.color.getBlue();
+                    pixels[x][y][0] = curr.color.getRed();
+                    pixels[x][y][1] = curr.color.getGreen();
+                    pixels[x][y][2] = curr.color.getBlue();
                 }
             }
+        }
+    }
 
-            return i - 1;
+    public int[][][] Decompress(String inputFileName) throws IOException {
+        try (ObjectInputStream ois = new ObjectInputStream(new BufferedInputStream(new FileInputStream(inputFileName)))) {
+            try {
+                PackedData data = (PackedData) ois.readObject();
+
+                int[][][] pixels = new int[data.width][data.height][3];
+                decompressQuadTree(pixels, 0, 0, data.width, data.height, data.root, data.compressedImage);
+
+                return pixels;
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
         }
 
-        int[][] offsets = {
-            { 0, 0 }, { halfWidth, 0 }, { 0, halfHeight }, { halfWidth, halfHeight }
-        };
-
-        for (int j = 0; j < 4; j++) {
-            int xOff = offsets[j][0];
-            int yOff = offsets[j][1];
-            int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
-            int h = (i < 2) ? halfHeight : height - halfHeight;
-            
-            i = decompressQuadTree(pixels, xStart + xOff, yStart + yOff, w, h, huffmanRoot, huffmanCodes, i + 1);
-        }
-
-        return i + 1;
+        return null;
     }
 
     private int[][][] getPreprocessedPixels(int[][][] pixels) {
@@ -432,21 +313,16 @@ public class Utility implements Serializable {
 
     private static final int MAX_CONCURRENT_DEPTH = 0; // Adjust as needed
 
-    private void traverseQuadTree(QuadNode node, Map<Color, String> huffmanCodes) {
+    private void traverseQuadTree(QuadNode node, Map<Color, String> huffmanCodes, Queue<String> queue) {
         if (node.isLeaf) {
             String huffmanCode = huffmanCodes.get(node.color);
-            
-            SecretSauce.packBit(1);
-            for (int i = 0; i < huffmanCode.length(); i++) {
-                SecretSauce.packBit(huffmanCode.charAt(i) - '0');
-            }
-
+            queue.add(huffmanCode);
             return;
         }
 
-        SecretSauce.packBit(0);
+        queue.add(".");
         for (int i = 0; i < 4; i++) {
-            traverseQuadTree(node.children[i], huffmanCodes);
+            traverseQuadTree(node.children[i], huffmanCodes, queue);
         }
     }
 
@@ -458,13 +334,10 @@ public class Utility implements Serializable {
             Color avgColor = averageColor(preproccessedPixels, xStart, yStart, width, height);
 
             if ((currentDepth >= maxDepth || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold))) {
-                SecretSauce.packBit(1);
                 hc.frequencies.put(avgColor, hc.frequencies.getOrDefault(avgColor, 0) + 1);
                 return new QuadNode(xStart, yStart, width, height, avgColor, true);
             }
         }
-        
-        SecretSauce.packBit(0);
 
         int halfWidth = width / 2;
         int halfHeight = height / 2;
