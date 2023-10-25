@@ -23,7 +23,7 @@ public class Utility implements Serializable {
         int minDepth = 5;
         int maxDepth = 7;
         double maxLoss = 15.0;
-        QuadNode root = buildQuadtree(pixels, 0, 0, pixels.length, pixels[0].length, maxLoss, maxDepth, minDepth);
+        QuadNode root = buildQuadtree(pixels, 0, 0, pixels.length, pixels[0].length, maxLoss, minDepth, maxDepth, 0);
         ; // Assuming 20% loss and max depth of 5
 
         try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(outputFileName))) {
@@ -91,11 +91,11 @@ public class Utility implements Serializable {
     }
 
     private QuadNode buildQuadtree(int[][][] pixels, int xStart, int yStart, int width, int height,
-            double lossThreshold, int depth, int minDepth) {
+            double lossThreshold, int minDepth, int maxDepth, int depth) {
         Color avgColor = averageColor(pixels, xStart, yStart, width, height);
 
-        if ((depth == 0 || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold)) &&
-                depth <= (7 - minDepth)) {
+        if ((depth == maxDepth || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold)) &&
+                depth >= (minDepth)) {
             return new QuadNode(xStart, yStart, width, height, avgColor);
         }
 
@@ -103,14 +103,14 @@ public class Utility implements Serializable {
         int halfHeight = height / 2;
 
         QuadNode node = new QuadNode(xStart, yStart, width, height, null);
-        node.children[0] = buildQuadtree(pixels, xStart, yStart, halfWidth, halfHeight, lossThreshold, depth - 1,
-                minDepth);
+        node.children[0] = buildQuadtree(pixels, xStart, yStart, halfWidth, halfHeight, 
+                lossThreshold, minDepth, maxDepth, depth + 1);
         node.children[1] = buildQuadtree(pixels, xStart + halfWidth, yStart, width - halfWidth, halfHeight,
-                lossThreshold, depth - 1, minDepth);
+                lossThreshold, minDepth, maxDepth, depth + 1);
         node.children[2] = buildQuadtree(pixels, xStart, yStart + halfHeight, halfWidth, height - halfHeight,
-                lossThreshold, depth - 1, minDepth);
+                lossThreshold, minDepth, maxDepth, depth + 1);
         node.children[3] = buildQuadtree(pixels, xStart + halfWidth, yStart + halfHeight, width - halfWidth,
-                height - halfHeight, lossThreshold, depth - 1, minDepth);
+                height - halfHeight, lossThreshold, minDepth, maxDepth, depth + 1);
 
         return node;
     }
