@@ -1,4 +1,9 @@
 import java.io.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.awt.Color;
 
 public class Utility implements Serializable {
@@ -19,12 +24,24 @@ public class Utility implements Serializable {
         }
     }
 
-    public void Compress(int[][][] pixels, String outputFileName) throws IOException {
+    public void Compress(int[][][] pixels, String outputFileName) {
         int minDepth = 5;
         int maxDepth = 7;
         double maxLoss = 15.0;
-        QuadNode root = buildQuadtree(pixels, 0, 0, pixels.length, pixels[0].length, maxLoss, maxDepth, minDepth);
-        ; // Assuming 20% loss and max depth of 5
+        QuadNode root = null;
+
+        // Using the buildQuadtreeWrapper with the parameters
+        try {
+            root = buildQuadtreeWrapper(pixels, maxLoss, maxDepth, minDepth);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // Restore the interrupted status
+            System.err.println("Compression was interrupted: " + e.getMessage());
+            return; // Exit the method early
+        } catch (ExecutionException e) {
+            System.err.println("An error occurred during compression: " + e.getMessage());
+            e.printStackTrace(); // This will print the root cause of the exception
+            return; // Exit the method early
+        }
 
         try (DataOutputStream dos = new DataOutputStream(new FileOutputStream(outputFileName))) {
             // Write the dimensions of the image
@@ -32,6 +49,8 @@ public class Utility implements Serializable {
             dos.writeInt(pixels[0].length);
 
             serializeQuadNode(dos, root);
+        } catch (IOException e) {
+            System.err.println("An I/O error occurred while writing the compressed data: " + e.getMessage());
         }
     }
 
@@ -90,8 +109,31 @@ public class Utility implements Serializable {
         return new Color(avgRed, avgGreen, avgBlue);
     }
 
+    public QuadNode buildQuadtreeWrapper(int[][][] pixels, double maxLoss, int maxDepth, int minDepth)
+            throws InterruptedException, ExecutionException {
+        int xStart = 0;
+        int yStart = 0;
+        int width = pixels.length;
+        int height = pixels[0].length;
+
+        // int numCores = Runtime.getRuntime().availableProcessors();
+        ExecutorService executor = Executors.newFixedThreadPool(1000);
+
+        // ExecutorService executor = Executors.newCachedThreadPool();;
+
+        QuadNode root = buildQuadtree(pixels, xStart, yStart, width, height, maxLoss, maxDepth, minDepth, executor, 0);
+
+        executor.shutdown();
+        executor.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
+
+        return root;
+    }
+
+    private static final int MAX_CONCURRENT_DEPTH = 3; // Adjust as needed
+
     private QuadNode buildQuadtree(int[][][] pixels, int xStart, int yStart, int width, int height,
-            double lossThreshold, int depth, int minDepth) {
+            double lossThreshold, int depth, int minDepth, ExecutorService executor, int currentDepth)
+            throws InterruptedException, ExecutionException {
         Color avgColor = averageColor(pixels, xStart, yStart, width, height);
 
         if ((depth == 0 || isCloseEnough(pixels, xStart, yStart, width, height, avgColor, lossThreshold)) &&
@@ -103,14 +145,36 @@ public class Utility implements Serializable {
         int halfHeight = height / 2;
 
         QuadNode node = new QuadNode(xStart, yStart, width, height, null);
-        node.children[0] = buildQuadtree(pixels, xStart, yStart, halfWidth, halfHeight, lossThreshold, depth - 1,
-                minDepth);
-        node.children[1] = buildQuadtree(pixels, xStart + halfWidth, yStart, width - halfWidth, halfHeight,
-                lossThreshold, depth - 1, minDepth);
-        node.children[2] = buildQuadtree(pixels, xStart, yStart + halfHeight, halfWidth, height - halfHeight,
-                lossThreshold, depth - 1, minDepth);
-        node.children[3] = buildQuadtree(pixels, xStart + halfWidth, yStart + halfHeight, width - halfWidth,
-                height - halfHeight, lossThreshold, depth - 1, minDepth);
+
+        int[][] offsets = {
+                { 0, 0 }, { halfWidth, 0 }, { 0, halfHeight }, { halfWidth, halfHeight }
+        };
+
+        if (currentDepth <= MAX_CONCURRENT_DEPTH) {
+            Future<QuadNode>[] futures = new Future[4];
+            for (int i = 0; i < 4; i++) {
+                int xOff = offsets[i][0];
+                int yOff = offsets[i][1];
+                int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
+                int h = (i < 2) ? halfHeight : height - halfHeight;
+                futures[i] = executor
+                        .submit(() -> buildQuadtree(pixels, xStart + xOff, yStart + yOff, w, h, lossThreshold,
+                                depth - 1, minDepth, executor, currentDepth + 1));
+            }
+
+            for (int i = 0; i < 4; i++) {
+                node.children[i] = futures[i].get();
+            }
+        } else {
+            for (int i = 0; i < 4; i++) {
+                int xOff = offsets[i][0];
+                int yOff = offsets[i][1];
+                int w = (i % 2 == 0) ? halfWidth : width - halfWidth;
+                int h = (i < 2) ? halfHeight : height - halfHeight;
+                node.children[i] = buildQuadtree(pixels, xStart + xOff, yStart + yOff, w, h, lossThreshold,
+                        depth - 1, minDepth, executor, currentDepth + 1);
+            }
+        }
 
         return node;
     }
