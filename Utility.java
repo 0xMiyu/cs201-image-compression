@@ -100,8 +100,8 @@ public class Utility {
     }
 
     public void Compress(int[][][] pixels, String outputFileName) {
-        int minDepth = 7;
-        int maxDepth = 10;
+        int minDepth = 6;
+        int maxDepth = 8;
         double maxLoss = 20.0;
 
         QuadNode root = null;
